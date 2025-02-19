@@ -221,6 +221,8 @@ Token* getToken(TwinBuffer* B){
                     dfaState=14;
                 }else if(c == '-'){
                     dfaState=15;
+                }else if(c == '*'){
+                    dfaState=16;
                 }else if(c == '/'){
                     dfaState=17;
                 }else if(c == '~'){
