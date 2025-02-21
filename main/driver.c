@@ -56,9 +56,17 @@ int main(int argc, char* argv[])
             // invoke your lexer here
             printf("Printing comment free code \n");
             printf("---------------------------\n");
-            TwinBuffer* B = (TwinBuffer*)malloc(sizeof(TwinBuffer));
-            initializeTwinBuffer(B);
-            removeComments(argv[1],B);
+            int fp = open(argv[1],O_RDONLY);
+            // printf("1");
+            TwinBuffer* B = initializeLexer(fp);
+            if (B == NULL) {
+                printf("Memory allocation failed while initializing lexer\n");
+                close(fp);
+                continue; // Avoid segmentation fault
+            }
+            // printf("2");
+            removeComments(argv[1],B,argv[2]);
+            // printf("3");
             printf("\nFinished printing comment free code \n");
         
         }
@@ -67,14 +75,32 @@ int main(int argc, char* argv[])
             // invoke your lexer here
             printf("Printing tokens: \n");
             printf("------------------\n");
-            int fp = open(argv[1],"r");
-            initializeLexer(fp);
+            int fp = open(argv[1],O_RDONLY);
+           /*  FILE * out;
+            out = fopen(argv[2],"w"); */
             Token * t;
-            TwinBuffer* B = (TwinBuffer*)malloc(sizeof(TwinBuffer));
-            initializeTwinBuffer(B);
-            while((t = getToken(B)) != NULL) {
-                printf("%s        %s        %d \n", getTerminal(t->TOKEN_NAME),t->LEXEME,t->LINE_NO);
+            TwinBuffer* B = initializeLexer(fp);
+            if (B == NULL) {
+                printf("Memory allocation failed while initializing lexer\n");
+                close(fp);
+                continue; // Avoid segmentation fault
             }
+            if (fp == -1) {
+                printf("Error opening file\n");
+                free(B);
+                continue;
+            }
+            int cnt = 0;
+            while((t = getToken(B)) != NULL) {
+                // Write token details to the output file
+                // fprintf(out, "Line no. %d\t Lexeme %s\t Token %s\n", t->LINE_NO, t->LEXEME, getTerminal(t->TOKEN_NAME));
+                
+                printf("Line no. %d\t Lexeme %s\t Token %s\n", t->LINE_NO, t->LEXEME, getTerminal(t->TOKEN_NAME));
+                cnt++;
+                free(t);
+            }
+            printf("Line final %d", cnt);
+            // fclose(out);
             close(fp);
 
             printf("\nFinished printing of token list \n");

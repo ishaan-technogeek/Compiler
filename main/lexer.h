@@ -1,8 +1,8 @@
 
 #include "lexerDef.h"
 
-
-void initializeTwinBuffer(TwinBuffer* B);
+void initializeTwinBuffer(TwinBuffer* B, int fd);
+TwinBuffer* initializeLexer(int fd);
 int getStream(int fd, TwinBuffer* B);
 char getNextChar(TwinBuffer* B);
 void acceptLexeme(TwinBuffer* B);
@@ -12,5 +12,6 @@ char* copyString(char* start, char* end);
 Token* createToken(Token* token, TokenName tokenType, char* lexeme, int lineNum, int isNumeric, Value* value);
 int stringToInteger(char* str);
 float stringToFloat(char* str);
-void removeComments(char* sourceFile);
+void removeComments(char* sourceFile, TwinBuffer* B, char* outputFile);
 Token* getToken(TwinBuffer* B);
+char* getTerminal(int enumId) ;

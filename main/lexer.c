@@ -14,17 +14,113 @@ int hasRetracted = 0;
 
 int fileDesc =0;
 
-void initializeTwinBuffer(TwinBuffer* B) {
+void initializeTwinBuffer(TwinBuffer* B, int fd) {
     B->activeBuffer = 0;
     B->nextBuffer = 1;
     B->startLexeme = NULL;
     B->lookahead = NULL;
+
+    fileDesc = fd;
 }
+
+TwinBuffer* initializeLexer(int fd) {
+    // Allocate memory for TwinBuffer
+    TwinBuffer* B = (TwinBuffer*)malloc(sizeof(TwinBuffer));
+    if (B == NULL) {
+        printf("Memory allocation failed for TwinBuffer\n");
+        return NULL;
+    }
+
+    // Reset global state
+    isInputExhausted = 0;
+    currentLine = 1;
+    hasRetracted = 0;
+    dfaState = 0;
+
+    // Initialize buffer
+    initializeTwinBuffer(B, fd);
+    
+    return B; // Return allocated and initialized buffer
+}
+
+
+
+// Replace the existing TerminalID initialization with:
+char* TerminalID[] = {
+    "TK_ASSIGNOP",
+    "TK_COMMENT",
+    "TK_FIELDID",
+    "TK_ID",
+    "TK_NUM",
+    "TK_RNUM",
+    "TK_FUNID",
+    "TK_RUID",
+    "TK_WITH",
+    "TK_PARAMETERS",
+    "TK_END",
+    "TK_WHILE",
+    "TK_UNION",
+    "TK_ENDUNION",
+    "TK_DEFINETYPE",
+    "TK_AS",
+    "TK_TYPE",
+    "TK_MAIN",
+    "TK_GLOBAL",
+    "TK_PARAMETER",
+    "TK_LIST",
+    "TK_SQL",
+    "TK_SQR",
+    "TK_INPUT",
+    "TK_OUTPUT",
+    "TK_INT",
+    "TK_REAL",
+    "TK_COMMA",
+    "TK_SEM",
+    "TK_COLON",
+    "TK_DOT",
+    "TK_ENDWHILE",
+    "TK_OP",
+    "TK_CL",
+    "TK_IF",
+    "TK_THEN",
+    "TK_ENDIF",
+    "TK_READ",
+    "TK_WRITE",
+    "TK_RETURN",
+    "TK_PLUS",
+    "TK_MINUS",
+    "TK_MUL",
+    "TK_DIV",
+    "TK_CALL",
+    "TK_RECORD",
+    "TK_ENDRECORD",
+    "TK_ELSE",
+    "TK_AND",
+    "TK_OR",
+    "TK_NOT",
+    "TK_LT",
+    "TK_LE",
+    "TK_EQ",
+    "TK_GT",
+    "TK_GE",
+    "TK_NE",
+    "TK_ERR",
+    "TK_DOLLAR",
+    "TK_EPS"
+};
+ 
+char* getTerminal(int enumId) {
+    return TerminalID[enumId];
+}
+
+
 
 int getStream(int fd, TwinBuffer* B) {
     if (isInputExhausted)
         return EOF;
     fileDesc = fd;
+    
+    memset(B->buffPair[B->nextBuffer],EOF ,BUFFER_SIZE);
 
     int bytesRead = read(fd,B->buffPair[B->nextBuffer], BUFFER_SIZE);
 
@@ -53,6 +149,25 @@ char getNextChar(TwinBuffer* B) {
         B->startLexeme = B->buffPair[B->activeBuffer];
         B->lookahead = B->buffPair[B->activeBuffer];
 
+        //to prevent buffer overflow 
+    if (B->lookahead >= B->buffPair[B->activeBuffer] + BUFFER_SIZE) {
+        printf("!!!!!!!!!!!!!!!!!!!!! Buffer overflow\n");
+        //  Lexeme spans across buffers, shift into next buffer
+        size_t firstPartSize = B->buffPair[0] + BUFFER_SIZE - B->startLexeme; // Remaining in buffer1
+
+        // Shift first part of lexeme into next buffer
+        memcpy(B->buffPair[B->nextBuffer], B->startLexeme, firstPartSize);
+
+        // Load new buffer and update pointers
+        int result = getStream(fileDesc, B);
+        if (result == -1 || result == -2) {
+            return EOF;
+        }
+
+        B->lookahead = B->buffPair[B->activeBuffer];  // Reset `lookahead`
+        B->startLexeme = B->buffPair[B->activeBuffer];  // Shifted lexeme now in `nextBuffer` 
+    }
+
     char* currChar = B->lookahead;
     B->lookahead++;
 
@@ -73,6 +188,7 @@ char getNextChar(TwinBuffer* B) {
             return EOF;
         }
         B->lookahead = B->buffPair[B->activeBuffer];
+        B->startLexeme = B->buffPair[B->activeBuffer];
     } else if (*currChar == EOF) {
         return EOF;
     }
@@ -97,6 +213,10 @@ void retractLexeme(TwinBuffer* B, int count) {
         (B->lookahead)--;
         count--;
     }
+    if (B->lookahead < B->startLexeme) {
+        printf("Error: lookahead moved before startLexeme! Resetting...\n");
+        B->startLexeme = B->lookahead;
+    }
     hasRetracted = 1;
 }
 
@@ -106,7 +226,18 @@ int rangeMatch(char ch,char start, char end) {
     return 0;
 }
 
-char* copyString(const char *start, const char *end) {
+char* copyString(const char *start, const char *end) { 
+    if (start == NULL || end == NULL) {
+        printf("Error: NULL pointer access in copyString\n");
+        return NULL;
+    }
+
+    // If lexeme spans across buffers
+   if (end < start) {  //Fixes lexemes spanning two buffers
+    printf("Error: Invalid lexeme boundary! startLexeme: %p, lookahead: %p\n", start, end);
+        return NULL;
+    }
+    //normal case
     size_t len = end - start;
     char* result = (char*)malloc(len + 1);
     if (result) {
@@ -137,17 +268,22 @@ float stringToFloat(char* str) {
     return f;
 }
 
-void removeComments(char* sourceFile, TwinBuffer* B) {
+void removeComments(char* sourceFile, TwinBuffer* B, char* outputFile) {
     int src = open(sourceFile, O_RDONLY);
     // int out = open(outputFile, O_CREAT | O_WRONLY | O_TRUNC);
-    int out =1;
-    
+     int out =1;
+    // Set the file descriptor
+    fileDesc = src;
+    if(src == -1 || out == -1) {
+        printf("Error opening file\n");
+        return;
+    }
     int state = 0;
     char ch;
     while ((ch = getNextChar(B)) != EOF) {
         switch (state) {
             case 0:
-                if (ch == ' ' || ch == '\f' || ch == '\r' || ch == '\t' || ch == '\v') {
+                if (ch == ' ' || ch == '\f' || ch == '\r' || ch == '\t' || ch == '\v') {                   
                     write(out, &ch, 1);
                     state = 0;
                 } else if (ch == '%') {
@@ -165,27 +301,27 @@ void removeComments(char* sourceFile, TwinBuffer* B) {
                 if (ch == '\n')
                     state = 0;
                 break;
-            case 3:
+            case 3: //Inside comment
                 if (ch == '\n') {
-                    write(out, &ch, 1);
+                    // write(out, &ch, 1); // Do not write the newline character
                     state = 0;
                 }
                 break;
         }
     }
-
+    // close(out);
     close(src);
 }
 
 Token* getToken(TwinBuffer* B){
     dfaState=0;
-    char c = 1;
+    char c = '?';
     Token* token = (Token*)malloc(sizeof(Token));
     int errorType;
 
     while(1){
-    
-        if(c == EOF)
+        
+            if(c == EOF)
             return NULL;
 
         switch(dfaState){
@@ -360,7 +496,7 @@ Token* getToken(TwinBuffer* B){
                     printf("Line %d : Cannot recognize pattern %s, Were you tring for != ?\n" ,currentLine,pattern);
                     free(pattern);
                     errorType = 3;
-                    dfaState = 55;
+                    dfaState = 64;
 
                     // Retract because an unforseen character lead the lexer to this dfaState, it can be a correct character which shouldl be included in the next token
                     retractLexeme(B, 1);
@@ -393,16 +529,21 @@ Token* getToken(TwinBuffer* B){
                     dfaState = 3;
                 }
                 else {
-                    // Throw lexical error.
-                    char* pattern = copyString(B->startLexeme, B->lookahead-sizeof(char));
-                    printf("Line %d : Cannot recognize pattern %s, Were you tring for <--- ?\n" ,currentLine,pattern);
-                    free(pattern);
-                    errorType = 3;
-                    dfaState = 64;
-
-                    // Retract because an unforseen character lead the lexer to this dfaState, it can be a correct character which shouldl be included in the next token
-                    retractLexeme(B, 1);
+                    dfaState = 65;
                 }
+                break;
+            }
+            case 65: {
+                retractLexeme(B, 2);
+                char* lex = copyString(B->startLexeme,B->lookahead);
+
+                if(c == '\n')
+                    createToken(token,TK_LT,lex,currentLine-1,0,NULL);
+                else
+                    createToken(token,TK_LT,lex,currentLine,0,NULL);
+
+                acceptLexeme(B);
+                return token;
                 break;
             }
             case 3: {
@@ -557,7 +698,7 @@ Token* getToken(TwinBuffer* B){
                     printf("Line %d : Cannot recognize pattern %s, Were you tring for &&& ?\n" ,currentLine,pattern);
                     free(pattern);
                     errorType = 3;
-                    dfaState = 55;
+                    dfaState = 64;
 
                     // Retract because an unforseen character lead the lexer to this dfaState, it can be a correct character which shouldl be included in the next token
                     retractLexeme(B, 1);
@@ -630,6 +771,17 @@ Token* getToken(TwinBuffer* B){
                 }
                 break;
             }
+            case 55: {
+                retractLexeme(B, 1);
+                char* lex = copyString(B->startLexeme,B->lookahead);
+                if(c == '\n')
+                    createToken(token,TK_FIELDID,lex,currentLine-1,0,NULL);
+                else
+                    createToken(token,TK_FIELDID,lex,currentLine,0,NULL);
+                acceptLexeme(B);
+                return token;
+                break;
+            }
             case 56: {
                 c = getNextChar(B);
                 while(rangeMatch(c,'2','7'))
@@ -660,7 +812,13 @@ Token* getToken(TwinBuffer* B){
                     dfaState = 64;
                 }
                 else {
+                    
                     char* lex = copyString(B->startLexeme,B->lookahead);
+                    if (lex == NULL) {
+                        printf("Error: copyString returned NULL\n");
+                        return NULL;
+                    }
+
                     if(c == '\n')
                         createToken(token,TK_ID,lex,currentLine-1,0,NULL);
                     else
@@ -675,7 +833,7 @@ Token* getToken(TwinBuffer* B){
                 while(rangeMatch(c,'a','z'))
                     c = getNextChar(B);
 
-                dfaState = 41;
+                dfaState = 52;
                 break;
             }
             case 52: {
@@ -733,16 +891,21 @@ Token* getToken(TwinBuffer* B){
                     dfaState = 43;
                 }
                 else {
-                    // Throw lexical error
-                    char* pattern = copyString(B->startLexeme, B->lookahead-sizeof(char));
-                    printf("Line %d : Cannot recognize pattern %s, Were you tring for a real number ?\n" ,currentLine,pattern);
-                    free(pattern);
-                    errorType = 3;
-                    dfaState = 64;
-
-                    // Retract because an unforseen character lead the lexer to this dfaState, it can be a correct character which shouldl be included in the next token
-                    retractLexeme(B, 1);
+                    dfaState = 42;
                 }
+                break;
+            }
+            case 42: {
+                retractLexeme(B,2);
+                char* lex = copyString(B->startLexeme,B->lookahead);
+                Value* val = malloc(sizeof(Value));
+                val->INT_VALUE = stringToInteger(lex);
+                if(c == '\n')
+                    createToken(token,TK_NUM,lex,currentLine-1,1,val);
+                else
+                    createToken(token,TK_NUM,lex,currentLine,1,val);
+                acceptLexeme(B);
+                return token;
                 break;
             }
             case 43: {
@@ -764,6 +927,88 @@ Token* getToken(TwinBuffer* B){
                 break;
             }
             case 44: {
+                c = getNextChar(B);
+                if(c == 'E') {
+                    dfaState = 45;
+                }
+                else {
+                    dfaState = 50;
+                }
+                break;
+            }
+            case 50: {
+                retractLexeme(B, 1);
+                char* lex = copyString(B->startLexeme,B->lookahead);
+                Value* val = (Value*)malloc(sizeof(Value));
+                val->FLOAT_VALUE = stringToFloat(lex);
+                createToken(token,TK_RNUM,lex,currentLine,2,val);
+                acceptLexeme(B);
+                return token;
+                break;
+            }
+            case 45:{
+                c = getNextChar(B);
+                if(c == '+' || c == '-') {
+                    dfaState = 46;
+                }
+                else if(rangeMatch(c,'0','9')) {
+                    dfaState = 47;
+                }
+                else {
+                    // Throw lexical
+                    char* pattern = copyString(B->startLexeme, B->lookahead-sizeof(char));
+                    printf("Line %d : Cannot recognize pattern %s, Were you tring for a real number ?\n" ,currentLine,pattern);
+                    free(pattern);
+                    errorType = 3;
+                    dfaState = 64;
+
+                    // Retract because an unforseen character lead the lexer to this dfaState, it can be a correct character which shouldl be included in the next token
+                    retractLexeme(B, 1);
+                }
+                break;
+            }
+            case 46: {
+                c = getNextChar(B);
+                if(rangeMatch(c,'0','9')) {
+                    dfaState = 47;
+                }
+                else {
+                    // Throw lexical
+                    char* pattern = copyString(B->startLexeme, B->lookahead-sizeof(char));
+                    printf("Line %d : Cannot recognize pattern %s, Were you tring for a real number ?\n" ,currentLine,pattern);
+                    free(pattern);
+                    errorType = 3;
+                    dfaState = 64;
+
+                    // Retract because an unforseen character lead the lexer to this dfaState, it can be a correct character which shouldl be included in the next token
+                    retractLexeme(B, 1);
+                }
+                break;
+            }
+            case 47: {
+                c = getNextChar(B);
+                if(rangeMatch(c,'0','9')) {
+                    dfaState = 48;
+                }
+                else {
+                    // Throw lexical
+                    char* pattern = copyString(B->startLexeme, B->lookahead-sizeof(char));
+                    printf("Line %d : Cannot recognize pattern %s, Were you tring for a real number ?\n" ,currentLine,pattern);
+                    free(pattern);
+                    errorType = 3;
+                    dfaState = 64;
+
+                    retractLexeme(B, 1);
+                }
+                break;
+            }
+            case 48: {
+                c = getNextChar(B);
+                dfaState = 49;
+                break;
+            }
+            case 49:{
+                retractLexeme(B, 1);
                 char* lex = copyString(B->startLexeme,B->lookahead);
                 Value* val = (Value*)malloc(sizeof(Value));
                 val->FLOAT_VALUE = stringToFloat(lex);
@@ -831,27 +1076,6 @@ Token* getToken(TwinBuffer* B){
                 }
                 break;
             }
-            // case 51: {
-            //     // Resolve keyword clash here
-            //     retractLexeme(B, 1);
-            //     char* lex = copyString(B->startLexeme,B->lookahead);
-            //     Node* n = lookUp(kt,lex);
-            //     if(n == NULL) {
-            //         if(c == '\n')
-            //             createToken(t,TK_FUNID,lex,currentLine-1,0,NULL);
-            //         else
-            //             createToken(t,TK_FUNID,lex,currentLine,0,NULL);
-            //     }
-            //     else {
-            //         if(c == '\n')
-            //             createToken(t,n->TOKEN_NAME,lex,currentLine-1,0,NULL);
-            //         else
-            //             createToken(t,n->TOKEN_NAME,lex,currentLine,0,NULL);
-            //     }
-            //     acceptLexeme(B);
-            //     return t;
-            //     break;
-            // }
             case 36: {
                 c = getNextChar(B);
                 if(rangeMatch(c,'a','z')) {
@@ -882,9 +1106,9 @@ Token* getToken(TwinBuffer* B){
                 retractLexeme(B, 1);
                 char* lex = copyString(B->startLexeme,B->lookahead);
                 if(c == '\n')
-                    createToken(token,TK_RECORD,lex,currentLine-1,0,NULL);
+                    createToken(token,TK_RUID,lex,currentLine-1,0,NULL);
                 else
-                    createToken(token,TK_RECORD,lex,currentLine,0,NULL);
+                    createToken(token,TK_RUID,lex,currentLine,0,NULL);
                 acceptLexeme(B);
                 return token;
                 break;

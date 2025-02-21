@@ -11,8 +11,8 @@ Aashish Singh                               2016A7PS0683P */
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-// #include <unistd.h> //use it for linux
-#include <io.h>
+#include <unistd.h> //use it for linux
+// #include <io.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
